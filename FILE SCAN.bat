@@ -21,9 +21,18 @@ echo UAC.ShellExecute "%~s0", "", "", "runas", 1 >> "%temp%\getadmin.vbs"
 REM Exit the script to avoid running the rest of the commands without elevation.
 exit /B
 :start
-REM Get the current date in YYYY-MM-DD format.
-for /f "tokens=2 delims==" %%i in ('wmic os get localdatetime /value') do set datetime=%%i
-set currentdate=%datetime:~0,4%-%datetime:~4,2%-%datetime:~6,2%
+REM Get the current date in YYYY-MM-DD format (WMIC when available, PowerShell as fallback).
+set "datetime="
+set "currentdate="
+where wmic >nul 2>&1
+if %errorlevel%==0 (
+    for /f "tokens=2 delims==" %%i in ('wmic os get localdatetime /value 2^>nul') do set "datetime=%%i"
+)
+if defined datetime (
+    set "currentdate=%datetime:~0,4%-%datetime:~4,2%-%datetime:~6,2%"
+) else (
+    for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format \"yyyy-MM-dd\""') do set "currentdate=%%i"
+)
 REM Prompt the user to decide whether to scan the computer for file corruptions.
 set /p choice="Would you like to scan your computer for file corruptions? (Y/N) "
 if /I "%choice%"=="Y" goto :runScans
@@ -75,6 +84,7 @@ for /f "tokens=*" %%a in (temp_log.txt) do (
     )
 )
 goto :checkDism
+:checkDism
 REM Check DISM.log for recent and important entries.
 echo ========== DISM LOG ========== >> C\WINDOWS\Logs\file_scan.log
 findstr /c:"%currentdate% Error" /c:"%currentdate% Warning" C\WINDOWS\Logs\DISM\dism.log > temp_log.txt
