@@ -1,0 +1,23 @@
+name: Windows regression tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Exercise parser, reports, launcher, and simulated native commands
+        shell: ${{ matrix.shell }}
+        run: .\tests\Test-FileScan.ps1
