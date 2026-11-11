@@ -1,10 +1,30 @@
 # Windows Log Scan & Repair
 
-Check Windows integrity, repair it when requested, and turn CBS/DISM logs into a readable report. The original `FILE SCAN.bat` entry point now launches a Windows PowerShell engine, with no WMIC, VBScript, downloaded modules, or installation required.
+Check Windows integrity, repair it when requested, and turn CBS/DISM logs into a readable report. Use the native Windows GUI or the original command-line launcher. No WMIC, VBScript, downloaded modules, or installation required.
 
 ## Quick start
 
-Keep `FILE SCAN.bat`, `FileScan.ps1`, and `FileScan.Core.psm1` together, then double-click **FILE SCAN.bat**. Choose:
+Keep the `src` folder beside the two batch launchers. Double-click **FILE SCAN GUI.bat** to open the desktop interface:
+
+- Choose **Analyze logs**, **Check system**, or **Repair system** in the operation toolbar. New sessions always start in Analyze.
+- Browse to CBS/DISM logs and a report folder, or use the defaults. Your paths and filter preferences are remembered.
+- Set log paths and filters in **Inputs**, then click **Preview plan** to validate settings and inspect the plan without running tools. Preview also works for Repair without elevation.
+- Click **Analyze logs**, **Run check**, or **Run repair** to run. Check/Repair requests Administrator access when needed and resumes the selected run in the elevated window.
+- Follow the current stage and elapsed time in the status bar. The window remains responsive; the **Transcript** tab shows console messages and completed command output. The progress bar is indeterminate, not an estimate of DISM/SFC completion.
+- Inspect counts and searchable entries in **Findings**. Filter by errors, warnings, or SFC events; select an entry to inspect and copy its full text in the adjacent entry inspector.
+- Open the HTML report or report folder, load a previous JSON report, or export the report and captured command output as a ZIP. The export excludes unrelated files in that folder.
+
+**Stop after current command** lets an active DISM/SFC command finish, skips later commands, and saves log reports. It never force-kills servicing tools. Log analysis and report writing finish normally, and the window prevents closing during an active run. No restart is performed automatically.
+
+The GUI limits retained excerpts to 20,000 entries and loads JSON reports up to 64 MB. Counts still include all matches. Settings and temporary session metadata are stored under `%LOCALAPPDATA%\FileScan\UI`; reports use the separate report folder below.
+
+To launch the GUI from a terminal:
+
+```powershell
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\src\gui\FileScan.Gui.ps1
+```
+
+For the existing terminal menu, double-click **FILE SCAN.bat**. Choose:
 
 | Choice | Behavior |
 | --- | --- |
@@ -28,6 +48,7 @@ Requires **Windows 10/11 and Windows PowerShell 5.1 or later**. PowerShell 7 on 
 - Timestamped folders containing text, JSON, HTML, and captured native command output; previous reports remain available.
 - Repair sources, Windows Update restriction, dry runs, unattended operation, optional findings exit codes, and a mutex to prevent overlapping FileScan integrity scans.
 - Dependency-free regression tests and Windows CI for PowerShell 5.1 and 7.
+- A WPF desktop interface with file browsing, saved preferences, stage/elapsed updates, searchable report entries, previous-report loading, ZIP export, and cooperative stopping.
 
 ## Reports
 
@@ -52,28 +73,28 @@ From PowerShell in the script folder:
 
 ```powershell
 # Analyze today's active logs and open the report.
-.\FileScan.ps1 -Mode Analyze -OpenReport
+.\src\FileScan.ps1 -Mode Analyze -OpenReport
 
 # Analyze a complete date range, including available uncompressed history.
-.\FileScan.ps1 -Mode Analyze -Since 2026-10-01 -Until 2026-10-06 -IncludeHistory
+.\src\FileScan.ps1 -Mode Analyze -Since 2026-10-01 -Until 2026-10-06 -IncludeHistory
 
 # Check command selection and repair-source arguments without running anything.
-.\FileScan.ps1 -Mode Repair -Source 'wim:D:\sources\install.wim:1' -LimitAccess -DryRun
+.\src\FileScan.ps1 -Mode Repair -Source 'wim:D:\sources\install.wim:1' -LimitAccess -DryRun
 
 # Repair, allowing DISM to use the configured repair source / Windows Update.
-.\FileScan.ps1 -Mode Repair
+.\src\FileScan.ps1 -Mode Repair
 
 # Analyze copied logs without Administrator access.
-.\FileScan.ps1 -Mode Analyze -CbsPath '.\copies\CBS.log' -DismPath '.\copies\dism.log' -OutputDirectory '.\reports'
+.\src\FileScan.ps1 -Mode Analyze -CbsPath '.\copies\CBS.log' -DismPath '.\copies\dism.log' -OutputDirectory '.\reports'
 
 # Unattended log monitoring: exit 3 when findings require review.
-.\FileScan.ps1 -Mode Analyze -NonInteractive -FailOnFindings
+.\src\FileScan.ps1 -Mode Analyze -NonInteractive -FailOnFindings
 
 # Unattended checks must run from an already elevated terminal or scheduled task.
-.\FileScan.ps1 -Mode Check -NonInteractive -OutputDirectory 'C:\Diagnostics\Reports'
+.\src\FileScan.ps1 -Mode Check -NonInteractive -OutputDirectory 'C:\Diagnostics\Reports'
 
 # Use a precise interval: start included, end excluded.
-.\FileScan.ps1 -Mode Analyze -Since '2026-10-06T09:00:00' -Until '2026-10-06T10:00:00'
+.\src\FileScan.ps1 -Mode Analyze -Since '2026-10-06T09:00:00' -Until '2026-10-06T10:00:00'
 ```
 
 The batch launcher accepts the same options. From Command Prompt:
@@ -83,7 +104,7 @@ The batch launcher accepts the same options. From Command Prompt:
 "FILE SCAN.bat" -Mode Repair -DryRun -Source "D:\Repair files\Windows" -LimitAccess
 ```
 
-Use `Get-Help .\FileScan.ps1 -Examples` for built-in examples. If your local execution policy blocks direct `.ps1` invocation, use the batch launcher.
+Use `Get-Help .\src\FileScan.ps1 -Examples` for built-in examples. If your local execution policy blocks direct `.ps1` invocation, use the batch launcher.
 
 ## Options
 
@@ -123,19 +144,52 @@ Only timestamped lines with a recognized Info/Warning/Error/Fatal column are par
 | `1` | A native command failed, or setup/options/elevation/report writing failed. |
 | `2` | One or more requested log sources were missing or unreadable. |
 | `3` | FailOnFindings was enabled and errors, warnings, or unrepairable observations were found. |
+| `4` | The GUI stopped the sequence at the user's request after the current command. Logs and reports are still saved. |
 
-Precedence: command failure (`1`), incomplete sources (`2`), then findings (`3`). DISM exit `3010` is treated as completed with a restart requested. SFC results are preserved without translating exit codes into health claims. The batch launcher propagates the PowerShell exit code and pauses only when started without arguments.
+Precedence: command failure (`1`), requested stop (`4`), incomplete sources (`2`), then findings (`3`). DISM exit `3010` is treated as completed with a restart requested. SFC results are preserved without translating exit codes into health claims. The terminal batch launcher propagates the PowerShell exit code and pauses only when started without arguments.
+
+## Repository layout
+
+```text
+FILE SCAN GUI.bat             Desktop launcher
+FILE SCAN.bat                 Terminal launcher
+FileScan.ps1                  Compatibility entry point for existing commands
+FileScan.Core.psm1            Compatibility import for existing scripts
+src/
+  FileScan.ps1                CLI entry point and run orchestration
+  FileScan.Core.psm1          Log analysis, native commands, and reports
+  gui/
+    FileScan.Gui.ps1          WPF window and event handlers
+    FileScan.Gui.Core.psm1    Settings, worker sessions, and report export
+    FileScan.Gui.xaml         Desktop layout and styles
+tests/
+  Test-All.ps1                Single test runner (All, CLI, or GUI)
+  Test-FileScan.ps1           CLI and engine regression suite
+  Test-FileScanGui.ps1        GUI regression suite
+  Run-Tests.ps1               Older local CLI suite (preserved)
+  fixtures/                  Harmless child scripts for tests
+.github/workflows/test.yml   Windows PowerShell 5.1 and 7 CI
+```
+
+Run terminal examples from the repository root. Launchers and internal imports locate application files relative to their own files. The root compatibility files preserve older CLI invocations and module imports; implementation changes belong under `src`. Generated reports and GUI settings default to `%LOCALAPPDATA%\FileScan`; tests create ignored, temporary `tests/artifacts-<id>` folders and remove them unless `-KeepArtifacts` is supplied.
 
 ## Tests
 
 Run from the repository folder using either PowerShell host:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-FileScan.ps1
-pwsh.exe -NoProfile -File .\tests\Test-FileScan.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-All.ps1
+pwsh.exe -NoProfile -File .\tests\Test-All.ps1
+
+# Run one suite or retain its reports and screenshots.
+pwsh.exe -NoProfile -File .\tests\Test-All.ps1 -Suite GUI -KeepArtifacts
 ```
 
+The runner uses the current PowerShell host and invokes each suite in its own script scope. `-Suite CLI` or `-Suite GUI` selects one suite; the default runs both. It exits with `1` if any selected suite fails. The older local `Run-Tests.ps1` is preserved for compatibility; CI and the commands above use `Test-All.ps1`.
+
 Tests use synthetic UTF-8/UTF-16 logs and harmless child processes. They **never run real DISM/SFC, repair Windows, or request UAC**. Coverage includes date boundaries, severity parsing, SFC events, rotated logs, missing/locked files, newest-entry limits, native argument quoting, command output/failures/reboot results, HTML escaping, JSON export, and the batch entry point. Add `-KeepArtifacts` to retain generated reports under `tests\artifacts-<id>` for inspection.
+
+GUI tests cover settings, source validation, stopping between mocked commands, progress messages, ZIP contents, and the actual WPF interface rendered offscreen. The interface analyzes copied sample logs and previews Repair commands; it never starts real servicing. With `-KeepArtifacts`, the GUI suite also retains `gui-preview.png` and additional Inputs, Repair, Transcript, and minimum-window-size screenshots for visual inspection. Both suites run in Windows CI.
 
 ## Microsoft references
 

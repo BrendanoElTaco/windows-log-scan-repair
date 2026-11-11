@@ -7,7 +7,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $script:assertions = 0
 $root = Split-Path $PSScriptRoot -Parent
-Import-Module (Join-Path $root 'FileScan.Core.psm1') -Force
+$sourceRoot = Join-Path $root 'src'
+Import-Module (Join-Path $sourceRoot 'FileScan.Core.psm1') -Force
 $testRoot = Join-Path $PSScriptRoot ('artifacts-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($testRoot)
 $encoding = [Text.UTF8Encoding]::new($false)
@@ -39,7 +40,7 @@ function Invoke-Fixture {
 try {
     foreach ($file in @('FileScan.ps1', 'FileScan.Core.psm1')) {
         $parseErrors = $null; $tokens = $null
-        [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $root $file), [ref]$tokens, [ref]$parseErrors)
+        [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $sourceRoot $file), [ref]$tokens, [ref]$parseErrors)
         Assert-Equal @($parseErrors).Count 0 "$file parses"
     }
     $window = Get-FileScanWindow -Since '2026-10-05' -Until '2026-10-06'
@@ -136,6 +137,8 @@ try {
     try { $locked = Get-FileScanAnalysis @arguments } finally { $lockedStream.Dispose() }
     Assert-Equal $locked.Sources[0].Status 'Unreadable' 'Locked source explicit'
     $empty = Join-Path $testRoot 'empty.log'; Write-Fixture $empty @()
+    $none = Get-FileScanAnalysis -CbsPath $empty -DismPath $empty -Since $window.Since -UntilExclusive $window.UntilExclusive
+    Assert-Equal $none.Entries.Count 0 'No matches stays an empty array'
     $large = Join-Path $testRoot 'large.log'
     $writer = [IO.StreamWriter]::new($large, $false, $encoding)
     try { for ($i = 2000; $i -ge 0; $i--) { $writer.WriteLine(('{0}, Error CSI entry {1}' -f ([datetime]'2026-10-05').AddSeconds($i).ToString('yyyy-MM-dd HH:mm:ss'), $i)) } }
@@ -179,7 +182,7 @@ try {
     Assert-True ($falseArgs -notcontains '-IncludeInfo') 'False switch omitted'
     $outRoot = Join-Path $testRoot 'reports [test] & spaced!'
     $cli = @('-Mode', 'Analyze', '-NonInteractive', '-CbsPath', $cbs, '-DismPath', $dism, '-Since', '2026-10-05', '-Until', '2026-10-06', '-OutputDirectory', $outRoot, '-MaxEntries', '20')
-    $cliResult = Invoke-Fixture CLI (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'FileScan.ps1')) + $cli)
+    $cliResult = Invoke-Fixture CLI (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $sourceRoot 'FileScan.ps1')) + $cli)
     Assert-Equal $cliResult.ExitCode 0 'Real CLI analysis succeeds'
     $runs = @(Get-ChildItem -LiteralPath $outRoot -Directory)
     Assert-Equal $runs.Count 1 'Unique run directory created'
@@ -201,14 +204,14 @@ try {
     Assert-Equal $batchExit 3 'Batch forwards paths and exit code'
     Assert-Equal @(Get-ChildItem -LiteralPath $outRoot -Directory).Count 2 'Previous reports retained'
     $missingCli = @('-NonInteractive', '-CbsPath', (Join-Path $testRoot 'missing.log'), '-DismPath', $dism, '-Since', '2026-10-05', '-Until', '2026-10-06', '-OutputDirectory', $outRoot)
-    $incomplete = Invoke-Fixture CLI (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'FileScan.ps1')) + $missingCli)
+    $incomplete = Invoke-Fixture CLI (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $sourceRoot 'FileScan.ps1')) + $missingCli)
     Assert-Equal $incomplete.ExitCode 2 'Unattended defaults to Analyze and signals missing logs'
     Assert-Equal @(Get-ChildItem -LiteralPath $outRoot -Directory).Count 3 'Incomplete analysis saves reports'
     $dryRoot = Join-Path $testRoot 'dry-run-must-not-exist'
-    $dry = Invoke-Fixture CLI @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'FileScan.ps1'), '-Mode', 'Repair', '-DryRun', '-NonInteractive', '-OutputDirectory', $dryRoot)
+    $dry = Invoke-Fixture CLI @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $sourceRoot 'FileScan.ps1'), '-Mode', 'Repair', '-DryRun', '-NonInteractive', '-OutputDirectory', $dryRoot)
     Assert-Equal $dry.ExitCode 0 'Repair dry run needs no elevation'
     Assert-True (-not (Test-Path -LiteralPath $dryRoot)) 'Dry run writes nothing'
-    $invalid = Invoke-Fixture CLI @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'FileScan.ps1'), '-Mode', 'Repair', '-Since', 'bad-date', '-DryRun', '-NonInteractive', '-OutputDirectory', $dryRoot)
+    $invalid = Invoke-Fixture CLI @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $sourceRoot 'FileScan.ps1'), '-Mode', 'Repair', '-Since', 'bad-date', '-DryRun', '-NonInteractive', '-OutputDirectory', $dryRoot)
     Assert-Equal $invalid.ExitCode 1 'Bad date stops execution'
     Assert-True (-not (Test-Path -LiteralPath $dryRoot)) 'Bad date writes nothing'
     [IO.File]::WriteAllText((Join-Path $testRoot 'PASS.txt'), "PASS: $script:assertions assertions.")

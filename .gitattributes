@@ -4,3 +4,6 @@
 *.psm1 text eol=lf
 *.md text eol=lf
 *.yml text eol=lf
+*.xaml text eol=lf
+/.gitattributes text eol=lf
+/.gitignore text eol=lf
